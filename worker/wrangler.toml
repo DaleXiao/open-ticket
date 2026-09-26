@@ -1,0 +1,31 @@
+name = "open-ticket-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-18"
+
+# Uncomment and set your own domain when self-hosting.
+# routes = [
+#   { pattern = "api.example.com/*", zone_name = "example.com" }
+# ]
+
+[vars]
+ENVIRONMENT = "production"
+# LLM API gateway base URL (any OpenAI-compatible gateway; only the URL lives here,
+# the access credential is the LLM_SERVICE_TOKEN secret).
+LLM_GATEWAY_URL = "https://your-llm-gateway.example.com"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"  # create with: wrangler kv namespace create RATE_LIMIT
+
+[durable_objects]
+bindings = [
+  { name = "GENERATION_QUEUE", class_name = "GenerationQueue" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GenerationQueue"]
+
+# Secrets (set via `wrangler secret put`):
+# - LLM_SERVICE_TOKEN   bearer token sent to the LLM gateway
+# - TURNSTILE_SECRET    Cloudflare Turnstile site secret for session verification
