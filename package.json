@@ -1,0 +1,30 @@
+{
+  "name": "open-ticket",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "AI-powered vintage movie ticket stub generator with a Cloudflare Worker backend.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DaleXiao/open-ticket.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && npm run check:dist && npm run check:emoji",
+    "check:dist": "node scripts/assert-production-dist.mjs",
+    "check:emoji": "node scripts/lint-emoji.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.5"
+  }
+}
