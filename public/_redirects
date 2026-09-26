@@ -1,0 +1,2 @@
+# Replace the target with your own Worker URL when self-hosting.
+/api/* https://tickets-worker.dale-x.workers.dev/api/:splat 200
