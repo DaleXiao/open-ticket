@@ -1,0 +1,636 @@
+/* ============================================================
+   open-ticket — movie ticket stub generator
+   Design direction: editorial
+     - film grain texture overlay
+     - warm neutral palette: light warm paper / dark deep-warm base #0c0b09, gold accent #d4a054
+     - Cormorant Garamond (Latin display serif) + Space Grotesk (UI chrome)
+       + Noto Sans SC for Chinese UI text (sans-serif in the UI; ticket-face serif is only baked into generated images)
+     - numbered sections, restrained motion, single choreographed load + result fade-in
+     Modern CSS: oklch / clamp / light-dark hand-written theme variables
+   ============================================================ */
+
+:root {
+  /* —— Light (warm paper) —— */
+  --paper: oklch(0.965 0.014 82);
+  --paper-raised: oklch(0.982 0.006 84);
+  --ink: oklch(0.26 0.02 55);
+  --ink-soft: oklch(0.45 0.022 55);
+  --ink-faint: oklch(0.6 0.018 58);
+  --edge: oklch(0.87 0.016 72);
+  --edge-strong: oklch(0.78 0.02 70);
+
+  --accent: #d4a054;
+  --accent-deep: #b9853e;
+  --accent-tint: oklch(0.945 0.04 80);
+  --on-accent: oklch(0.22 0.02 55);
+
+  --grain-opacity: 0.045;
+
+  --font-serif: "Cormorant Garamond", "Noto Sans SC", Georgia, serif;
+  --font-sans: "Space Grotesk", "Noto Sans SC", system-ui, sans-serif;
+
+  --measure: 42rem;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* —— Dark (deep-warm base, primary theme) —— */
+  --paper: #0c0b09;
+  --paper-raised: #15120d;
+  --ink: oklch(0.87 0.014 78);
+  --ink-soft: oklch(0.68 0.015 76);
+  --ink-faint: oklch(0.52 0.015 74);
+  --edge: oklch(0.28 0.014 72);
+  --edge-strong: oklch(0.36 0.016 72);
+
+  --accent: #d4a054;
+  --accent-deep: #e2b877;
+  --accent-tint: oklch(0.26 0.03 76);
+  --on-accent: oklch(0.16 0.015 60);
+
+  --grain-opacity: 0.06;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* —— Film grain overlay —— */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 240px 240px;
+}
+
+/* —— Trailing light spot ——
+   Projector beam (dark) / pool of daylight (light). A single radial-gradient layer
+   driven by --bx/--by, following the pointer with rAF lerp (factor 0.085).
+   z-index sits above content but below the grain (9999); pointer-events:none never
+   blocks interaction. Mobile / reduced-motion keep it static and centered. */
+.beam {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  /* Light default: low-opacity warm-gold pool of daylight (a projected beam does not read on a bright base, so no flicker and no vignette) */
+  background: radial-gradient(
+    ellipse 360px 320px at var(--bx, 50%) var(--by, 44%),
+    rgba(212, 160, 84, 0.17) 0%,
+    rgba(212, 160, 84, 0.07) 38%,
+    rgba(212, 160, 84, 0.02) 58%,
+    transparent 72%
+  );
+}
+
+/* Dark: projector beam + very subtle flicker (90ms jitter) */
+.dark .beam {
+  background: radial-gradient(
+    ellipse 360px 320px at var(--bx, 50%) var(--by, 44%),
+    rgba(238, 196, 124, 0.22) 0%,
+    rgba(212, 160, 84, 0.10) 36%,
+    rgba(212, 160, 84, 0.03) 55%,
+    transparent 70%
+  );
+  animation: beam-flicker 90ms infinite;
+}
+
+@keyframes beam-flicker {
+  0%,
+  100% { opacity: 1; }
+  50% { opacity: 0.955; }
+}
+
+/* Dark corner vignette (always on, independent of the beam flicker; layered above the beam so edges stay dimmed) */
+.vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  display: none;
+}
+
+.dark .vignette {
+  display: block;
+  background: radial-gradient(
+    ellipse 90% 80% at 50% 46%,
+    transparent 52%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+}
+
+/* ============ Layout ============ */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  /* Not sticky: a floating topbar would overlap the text below; it simply scrolls with the page */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 auto;
+  width: 100%;
+  max-width: calc(var(--measure) + 4rem);
+  padding: 1.1rem 1.25rem;
+}
+
+.wordmark {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.wordmark .dot {
+  color: var(--accent);
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.container {
+  width: 100%;
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: clamp(2rem, 6vw, 4rem) 1.25rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(2rem, 5vw, 3rem);
+}
+
+/* ============ Header (editorial hero) ============ */
+
+.hero {
+  max-width: 34rem;
+}
+
+.eyebrow {
+  display: inline-block;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.1rem;
+}
+
+.headline {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 5.4vw, 3rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 0.9rem 0 0;
+  color: var(--ink-soft);
+  font-size: clamp(0.98rem, 2.4vw, 1.08rem);
+  max-width: 30rem;
+}
+
+/* ============ Fields / form (editorial underline style, not a wall of cards) ============ */
+
+.form {
+  position: relative;
+  border-top: 1px solid var(--edge);
+  padding-top: 1.6rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field + .field {
+  margin-top: 1.4rem;
+}
+
+.field-label {
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.field-label .req {
+  color: var(--accent);
+}
+
+.input {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--edge-strong);
+  border-radius: 0;
+  padding: 0.5rem 0;
+  transition: border-color 140ms ease;
+}
+
+.input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+.input::placeholder {
+  color: var(--ink-faint);
+  opacity: 0.8;
+}
+
+/* Film title uses the serif face (ticket-lettering character) */
+.serif-input {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem;
+  margin-top: 1.4rem;
+}
+
+/* Fix date/time misalignment: the second field in a row no longer inherits the vertical margin from .field + .field */
+.row .field + .field {
+  margin-top: 0;
+}
+
+/* Calendar icon adaptation for date/time controls in the dark theme */
+.dark .input[type="date"],
+.dark .input[type="time"] {
+  color-scheme: dark;
+}
+
+/* ============ Buttons ============ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.9rem;
+  padding: 0.75rem 1.4rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.92rem;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.form > .btn {
+  width: 100%;
+  margin-top: 1.8rem;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: var(--accent-deep);
+}
+
+.btn-primary:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--edge-strong);
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+/* Header toggle buttons (warm paper / ink texture, not default controls) */
+.knob {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.5rem;
+  min-width: 2.5rem;
+  padding: 0 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--edge-strong);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.knob:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.knob .ico {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.knob-text {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+/* ============ Result / progress ticket ============ */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.status-soft {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.status .pct {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sunburst spinner (animate-spin, 1s linear) */
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.ticket {
+  position: relative;
+  background: var(--paper-raised);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ticket img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+}
+
+/* Ticket punch holes + perforated edge (presentation layer) */
+.ticket::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  width: 12px;
+  height: 12px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--edge);
+  box-shadow: 0 0 0 4px var(--paper);
+}
+
+.ticket::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 14px;
+  background-image: radial-gradient(circle, var(--paper) 3.4px, transparent 3.8px);
+  background-size: 16px 14px;
+  background-position: 8px center;
+  pointer-events: none;
+}
+
+/* Skeleton screen (while generating) */
+.skeleton {
+  aspect-ratio: 3 / 2;
+  background:
+    linear-gradient(100deg, transparent 38%, oklch(1 0 0 / 0.4) 50%, transparent 62%),
+    var(--edge);
+  background-size: 220% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.dark .skeleton {
+  background:
+    linear-gradient(100deg, transparent 38%, oklch(1 0 0 / 0.08) 50%, transparent 62%),
+    var(--edge);
+  background-size: 220% 100%;
+}
+
+@keyframes shimmer {
+  0% { background-position: 180% 0; }
+  100% { background-position: -60% 0; }
+}
+
+/* Three-line serif echo of the result (title / showtime / ELSEWHERE CINEMA) */
+.caption {
+  line-height: 1.25;
+}
+
+.caption-title {
+  font-family: var(--font-serif);
+  font-size: 1.7rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.caption-meta {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  color: var(--ink-soft);
+  margin-top: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.caption-venue {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 0.7rem;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+.actions .btn {
+  width: 100%;
+}
+
+/* ============ Error / quota ============ */
+
+.error {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  color: var(--accent-deep);
+}
+
+.quota {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+.quota .num {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ Footer ============ */
+
+.footer {
+  margin-top: auto;
+  padding: 2rem 1.25rem 2.5rem;
+  text-align: center;
+}
+
+.footer a {
+  color: var(--ink-faint);
+  text-decoration: none;
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+}
+
+.footer a:hover {
+  color: var(--ink-soft);
+}
+
+/* ============ Motion (restrained, single choreography) ============ */
+
+.rise {
+  animation: rise 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rise-1 { animation-delay: 70ms; }
+.rise-2 { animation-delay: 150ms; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  .skeleton { animation: none; }
+  .rise { animation: none; }
+  .btn, .knob { transition: none; }
+  .dark .beam { animation: none; }
+}
+
+/* ============ Narrow screens (mobile) ============ */
+
+@media (max-width: 520px) {
+  .row {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem;
+  }
+  .actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .headline {
+    font-size: 1.9rem;
+  }
+}
